@@ -1,92 +1,75 @@
-import os
-import sys
 import csv
-import json
-import pandas as pd
-from elasticsearch import helpers, Elasticsearch
+import os
 import argparse
+import json
+from collections import defaultdict
+from elasticsearch import Elasticsearch, helpers
 
+host = host=os.getenv('ES_HOSTNAME')
+#host = 'https://search-dexi-elastic-chyww75sud3elx5ppuez5b7p5q.us-east-1.es.amazonaws.com'
+client = Elasticsearch(host)
 
-# def createindices(client):
-#     client.indices.create('transaction_contract_2017')
-#     client.indices.create('transaction_direct_payment_2017')
+with open('es_mapping.json') as f:
+    data = json.load(f)
+    ES_MAPPING = json.dumps(data)
 
-'''
---------- # Add the mapper section once you receive the mapper file 
+def gen_chunks(reader, fields, chunksize):
 
-with open('index_format_file.json') as mapper_file:
-	json.load(mapper_file)
+    """
+    Chunk generator. Take a CSV `reader` and yield
+    `chunksize` sized slices.
+    fields
+    --------
+    list of csv fields mapping data to ['text','title','date']
+    """
 
-def master_function(chunk,base_index_name='transactions'):
-    indices_dict = defaultdict(list)
-    for line in chunk:
-        index_name = '{}-{}'.format(base_index_name, lower(line['transaction_award_type'])
-        indices_dict[index_name].append(link)
-    return indices_dict
-
-'''
-
-# def post_to_es(records, index_name):
-# 	es = Elasticsearch(['https://search-dexi-elastic-chyww75sud3elx5ppuez5b7p5q.us-east-1.es.amazonaws.com'])
-# 	helpers.bulk(es, records, index=index_name, doc_type='json')
-
-
-# def function_to_send(chunk_size_total, transaction_type, index_name):
-# 	chunksize = chunk_size_total
-# 	csv_filename = '/Users/venkatmynam/Desktop/Query_Results.csv'
-# 	f = open(csv_filename) # read csv
-# 	csvfile = pd.read_csv(f, iterator=True, chunksize=chunksize) 
-# 	for i,df in enumerate(csvfile): 
-# 	    df_filtered = df[(df.award_category == transaction_type)].T.to_dict()
-# 	    #records=df.where(pd.notnull(df), None).T.to_dict()
-# 	    list_records=[records[it] for it in df_filtered]
-# 	    #print(list_records)
-# 	    post_to_es(list_records, index_name)
-
-
-
-def gen_chunks(reader, fields, chunksize=100):
-    chunk = []
     g = lambda x: dict(zip(fields,x))
-    for index, line in enumerate(reader):
-        if (index % chunksize == 0 and index > 0):
+
+    chunk = []
+    for i, line in enumerate(reader):
+        if (i % chunksize == 0 and i > 0):
             yield chunk
             del chunk[:]
         chunk.append(g(line))
     yield chunk
 
-def post_to_es(records, index_name):
-	es = Elasticsearch(['https://search-dexi-elastic-chyww75sud3elx5ppuez5b7p5q.us-east-1.es.amazonaws.com'])
-	helpers.bulk(es, records, index=index_name, doc_type='json')
+def break_up_chunk(chunk,base_index_name):
+    '''chunk - list of dictionaries'''
+    indices_dict = defaultdict(list)
+    for line in chunk:
+        index_name = '{}-{}{}'.format(base_index_name, line['award_category'].replace(" ", "").lower(),'s')
+        # print(index_name)
+        indices_dict[index_name].append(line)
+    return indices_dict
 
+def post_to_es(chunk,args):
+    indices_dict = break_up_chunk(chunk,args.base_indexname)
+    for index_name,body in indices_dict.items():
+        print(index_name)
+        if not client.indices.exists(index_name):
+        #     client.indices.create(index=str(index_name),body=ES_MAPPING)
+        # helpers.bulk(client, body, index=index_name, doc_type='json')
 
-with open('/Users/venkatmynam/Desktop/query_export_2017.csv', 'r')  as file:
-	reader = csv.reader(file)
-	fields = reader.next()
-	csv_generator = gen_chunks(reader, fields)
-	print(fields)
-	for chunk in csv_generator:
-		post_to_es(chunk, "testing_chunk_am")
+def main():
+    #TODO make models argument
+    argument_parser = argparse.ArgumentParser('Will add help text')
+    argument_parser.add_argument('--infile',type=str,
+                                    required=True)
+    argument_parser.add_argument('--base_indexname',type=str,default='sample-transactions')
+    argument_parser.add_argument('--doc_type',type=str,default='json')
+    argument_parser.add_argument('--chunk_size',type=int,
+                                default=100000)
+    args = argument_parser.parse_args()
+    count = 0
 
+    with open(args.infile) as f:
+        reader = csv.reader(f)
+        fields = reader.next()
+        csv_generator = gen_chunks(reader,fields,args.chunk_size)
+        chunk = csv_generator.next()
+        post_to_es(chunk,args)
 
-# import sys
-# print sys.version
-
-# for chunk in gen_chunks(range(10), chunksize=3):
-#     print chunk # process chuck
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+if __name__ == '__main__':
+    main()
 
 
